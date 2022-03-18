@@ -87,7 +87,7 @@ func (p *round2Handler) HandleMessage(logger log.Logger, message types.Message) 
 	ownPed := p.own.para
 	n := peer.para.Getn()
 	// Verify psi
-	err = round2.Psi.Verify(parameter, peer.ssidWithBk, p.paillierKey.GetN(), n, p.kCiphertext, new(big.Int).SetBytes(round2.D), new(big.Int).SetBytes(round2.F), ownPed.Getn(), ownPed.Gets(), ownPed.Gett(), Gamma)
+	err = round2.Psi.Verify(parameter, p.own.ssidWithBk, p.paillierKey.GetN(), n, p.kCiphertext, new(big.Int).SetBytes(round2.D), new(big.Int).SetBytes(round2.F), ownPed.Getn(), ownPed.Gets(), ownPed.Gett(), Gamma)
 	if err != nil {
 		logger.Debug("Failed to verify", "err", err)
 		return err
