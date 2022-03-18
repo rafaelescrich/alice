@@ -78,24 +78,25 @@ func (p *round2Handler) HandleMessage(logger log.Logger, message types.Message) 
 		return tss.ErrPeerNotFound
 	}
 	round2 := msg.GetRound2()
-	proveBK := peer.bk
 	Gamma, err := round2.Gamma.ToPoint()
 	if err != nil {
+		logger.Debug("Failed to Gamma.ToPoint", "err", err)
 		return err
 	}
 
 	ownPed := p.own.para
 	n := peer.para.Getn()
-	proveBKXString := proveBK.GetX().String()
 	// Verify psi
 	err = round2.Psi.Verify(parameter, peer.ssidWithBk, p.paillierKey.GetN(), n, p.kCiphertext, new(big.Int).SetBytes(round2.D), new(big.Int).SetBytes(round2.F), ownPed.Getn(), ownPed.Gets(), ownPed.Gett(), Gamma)
 	if err != nil {
+		logger.Debug("Failed to verify", "err", err)
 		return err
 	}
 	// Verify phiHat
-	bkPartialKey := p.partialPubKey[proveBKXString].ScalarMult(peer.bkcoefficient)
+	bkPartialKey := peer.partialPubKey.ScalarMult(peer.bkcoefficient)
 	err = round2.Psihat.Verify(parameter, peer.ssidWithBk, p.paillierKey.GetN(), n, p.kCiphertext, new(big.Int).SetBytes(round2.Dhat), new(big.Int).SetBytes(round2.Fhat), ownPed.Getn(), ownPed.Gets(), ownPed.Gett(), bkPartialKey)
 	if err != nil {
+		logger.Debug("Failed to verify", "err", err)
 		return err
 	}
 	// Verify phipai
@@ -103,14 +104,17 @@ func (p *round2Handler) HandleMessage(logger log.Logger, message types.Message) 
 	G := pt.NewBase(curve)
 	err = round2.Psipai.Verify(parameter, peer.ssidWithBk, peer.round1Data.gammaOtherCiphertext, n, ownPed.Getn(), ownPed.Gets(), ownPed.Gett(), Gamma, G)
 	if err != nil {
+		logger.Debug("Failed to verify", "err", err)
 		return err
 	}
 	alpha, err := p.paillierKey.Decrypt(round2.D)
 	if err != nil {
+		logger.Debug("Failed to decrypt", "err", err)
 		return err
 	}
 	alphahat, err := p.paillierKey.Decrypt(round2.Dhat)
 	if err != nil {
+		logger.Debug("Failed to decrypt", "err", err)
 		return err
 	}
 
@@ -136,9 +140,11 @@ func (p *round2Handler) Finalize(logger log.Logger) (types.Handler, error) {
 	sumGamma := pt.ScalarBaseMult(curve, p.gamma)
 	delta := new(big.Int).Mul(p.gamma, p.k)
 	chi := new(big.Int).Mul(p.bkMulShare, p.k)
-	for _, peer := range p.peers {
+	for id, peer := range p.peers {
+		logger = logger.New("peerId", id)
 		sumGamma, err = sumGamma.Add(peer.round2Data.allGammaPoint)
 		if err != nil {
+			logger.Debug("Failed to add gamma", "err")
 			return nil, err
 		}
 		// Compute δi=γiki+ sum_{j!= i}(αi,j+βi,j) mod q and χi=xiki+sum_{j!=0i}(αˆi,j+βˆi,j) mod q.
@@ -150,6 +156,7 @@ func (p *round2Handler) Finalize(logger log.Logger) (types.Handler, error) {
 		chi.Mod(chi, curveN)
 	}
 	if sumGamma.IsIdentity() {
+		logger.Debug("SumGamma is identity")
 		return nil, ErrZeroR
 	}
 	p.sumGamma = sumGamma
@@ -159,15 +166,18 @@ func (p *round2Handler) Finalize(logger log.Logger) (types.Handler, error) {
 	p.BigDelta = Delta
 	MsgDelta, err := Delta.ToEcPointMessage()
 	if err != nil {
+		logger.Debug("Failed to ToEcPointMessage", "err", err)
 		return nil, err
 	}
 	p.sumMTAAlpha = big.NewInt(0)
 	for id, peer := range p.peers {
+		logger = logger.New("peerId", id)
 		ownPed := p.own.para
 		n := peer.para.Getn()
 		// Compute proof phi''
 		psidoublepaiProof, err := paillierzkproof.NewKnowExponentAndPaillierEncryption(parameter, p.own.ssidWithBk, p.k, p.rho, p.kCiphertext, n, ownPed.Getn(), ownPed.Gets(), ownPed.Gett(), Delta, sumGamma)
 		if err != nil {
+			logger.Debug("Failed to NewKnowExponentAndPaillierEncryption", "err", err)
 			return nil, err
 		}
 		p.peerManager.MustSend(id, &Message{

@@ -65,9 +65,7 @@ type round1Handler struct {
 	ssid            []byte
 	bkMulShare      *big.Int
 	pubKey          *pt.ECPoint
-	allY            map[string]*pt.ECPoint
 	paillierKey     *paillier.Paillier
-	partialPubKey   map[string]*pt.ECPoint
 	bkpartialPubKey *pt.ECPoint
 	msg             []byte
 
@@ -126,28 +124,13 @@ func newRound1Handler(threshold uint32, ssid []byte, share *big.Int, pubKey *pt.
 	}
 	peers := make(map[string]*peer, peerManager.NumPeers())
 	for i, id := range ids {
+		if id == selfId {
+			continue
+		}
 		peers[id] = newPeer(id, ssid, bks[id], bkcoefficient[i], ped[id], partialPubKey[id], allY[id])
 	}
 	bkShare := new(big.Int).Mul(share, bkcoefficient[0])
 	bkShare.Mod(bkShare, curveN)
-
-	p := &round1Handler{
-		ssid:          ssid,
-		bkMulShare:    bkShare,
-		pubKey:        pubKey,
-		allY:          allY,
-		paillierKey:   paillierKey,
-		partialPubKey: partialPubKey,
-		msg:           msg,
-
-		bks:     bks,
-		bkShare: bkShare,
-
-		peerManager: peerManager,
-		peerNum:     peerManager.NumPeers(),
-		peers:       peers,
-		own:         newPeer(selfId, ssid, ownBK, bkcoefficient[0], ped[selfId], partialPubKey[selfId], allY[selfId]),
-	}
 
 	// Build and send round1 message
 	// k, γ in F_q
@@ -160,46 +143,37 @@ func newRound1Handler(threshold uint32, ssid []byte, share *big.Int, pubKey *pt.
 		return nil, err
 	}
 	// Gi = enc_i(γ, mu), and Ki = enc(k, ρ)
-	kCiphertext, rho, err := p.paillierKey.EncryptWithOutputSalt(k)
+	kCiphertext, rho, err := paillierKey.EncryptWithOutputSalt(k)
 	if err != nil {
 		return nil, err
 	}
-	gammaCiphertext, mu, err := p.paillierKey.EncryptWithOutputSalt(gamma)
+	gammaCiphertext, mu, err := paillierKey.EncryptWithOutputSalt(gamma)
 	if err != nil {
 		return nil, err
 	}
-	n := p.paillierKey.GetN()
-	for id, peer := range peers {
-		ped := peer.para
-		pedN := ped.Getn()
-		peds := ped.Gets()
-		pedt := ped.Gett()
-		// Compute proof psi_{j,i}^0
-		psi, err := paillierzkproof.NewEncryptRangeMessage(parameter, peer.ssidWithBk, kCiphertext, n, k, rho, pedN, peds, pedt)
-		if err != nil {
-			return nil, err
-		}
-		peerManager.MustSend(id, &Message{
-			Id:   selfId,
-			Type: Type_Round1,
-			Body: &Message_Round1{
-				Round1: &Round1Msg{
-					KCiphertext:     kCiphertext.Bytes(),
-					GammaCiphertext: gammaCiphertext.Bytes(),
-					Psi:             psi,
-				},
-			},
-		})
-	}
-
 	// Set data
-	p.k = k
-	p.rho = rho
-	p.kCiphertext = kCiphertext
-	p.gamma = gamma
-	p.mu = mu
-	p.gammaCiphertext = gammaCiphertext
-	return p, nil
+	return &round1Handler{
+		ssid:        ssid,
+		bkMulShare:  bkShare,
+		pubKey:      pubKey,
+		paillierKey: paillierKey,
+		msg:         msg,
+
+		k:               k,
+		rho:             rho,
+		gamma:           gamma,
+		mu:              mu,
+		gammaCiphertext: gammaCiphertext,
+		kCiphertext:     kCiphertext,
+
+		bks:     bks,
+		bkShare: bkShare,
+
+		peerManager: peerManager,
+		peerNum:     peerManager.NumPeers(),
+		peers:       peers,
+		own:         newPeer(selfId, ssid, ownBK, bkcoefficient[0], ped[selfId], partialPubKey[selfId], allY[selfId]),
+	}, nil
 }
 
 func (p *round1Handler) MessageType() types.MessageType {
@@ -303,6 +277,34 @@ func (p *round1Handler) HandleMessage(logger log.Logger, message types.Message) 
 
 func (p *round1Handler) Finalize(logger log.Logger) (types.Handler, error) {
 	return newRound2Handler(p)
+}
+
+func (p *round1Handler) sendRound1Messages() error {
+	n := p.paillierKey.GetN()
+	selfId := p.peerManager.SelfID()
+	for id, peer := range p.peers {
+		ped := peer.para
+		pedN := ped.Getn()
+		peds := ped.Gets()
+		pedt := ped.Gett()
+		// Compute proof psi_{j,i}^0
+		psi, err := paillierzkproof.NewEncryptRangeMessage(parameter, peer.ssidWithBk, p.kCiphertext, n, p.k, p.rho, pedN, peds, pedt)
+		if err != nil {
+			return err
+		}
+		p.peerManager.MustSend(id, &Message{
+			Id:   selfId,
+			Type: Type_Round1,
+			Body: &Message_Round1{
+				Round1: &Round1Msg{
+					KCiphertext:     p.kCiphertext.Bytes(),
+					GammaCiphertext: p.gammaCiphertext.Bytes(),
+					Psi:             psi,
+				},
+			},
+		})
+	}
+	return nil
 }
 
 func getMessage(messsage types.Message) *Message {
